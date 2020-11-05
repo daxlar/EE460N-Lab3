@@ -1,6 +1,6 @@
 /*
-    Name 1: Your full name
-    UTEID 1: Your UT EID
+    Name 1: Allen Zhang
+    UTEID 1: acz356
 */
 
 /***************************************************************/
