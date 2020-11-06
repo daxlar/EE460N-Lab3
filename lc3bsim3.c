@@ -590,21 +590,27 @@ void eval_micro_sequencer() {
 
   if(irdBits){
       // get the opCode bits for next iteration
-      int instructionBits = ((CURRENT_LATCHES.IR >> (11)) & 0x000F);
+      int instructionBits = ((CURRENT_LATCHES.IR >> (12)) & 0x000F);
       nextMicroinstructionAddress = instructionBits;
   }else{
+      nextMicroinstructionAddress = jBits;
       if(condBits == 1){
           // couple the R bit to jBits
-          nextMicroinstructionAddress = jBits || (CURRENT_LATCHES.READY << 1);
+          nextMicroinstructionAddress = jBits | (CURRENT_LATCHES.READY << 1);
       }else if(condBits == 2){
           // couple the BEN bit to jBits
-          nextMicroinstructionAddress = jBits || (CURRENT_LATCHES.BEN << 2);
+          nextMicroinstructionAddress = jBits | (CURRENT_LATCHES.BEN << 1);
       }else if(condBits == 3){
           // couple of IR[11] bit to jBits
-          nextMicroinstructionAddress = jBits || ((CURRENT_LATCHES.IR >> 11) & 0x0001);
+          nextMicroinstructionAddress = jBits | ((CURRENT_LATCHES.IR >> 11) & 0x0001);
       }
   }
-
+  
+  NEXT_LATCHES.STATE_NUMBER = nextMicroinstructionAddress;
+  printf("jBits: %d \n", jBits);
+  printf("next state: %d \n", nextMicroinstructionAddress);
+  printf("irdBits: %d \n", irdBits);
+  printf("condBits: %d \n", condBits);
   memcpy(NEXT_LATCHES.MICROINSTRUCTION, CONTROL_STORE[nextMicroinstructionAddress], sizeof(int)*CONTROL_STORE_BITS);
 }
 
@@ -618,10 +624,21 @@ void cycle_memory() {
    * cycle to prepare microsequencer for the fifth cycle.  
    */
 
-  // check MIO.EN
-  static int cycleNumber = 1;
+  // if not in state with memory cycling, then just return
+  int jBits = GetJ(CURRENT_LATCHES.MICROINSTRUCTION);
+  if((jBits == 33) || (jBits == 16) || (jBits == 17) || (jBits == 25) || (jBits == 29) || (jBits == 28)){
+  }else{
+      NEXT_LATCHES.READY = 0;
+      return;
+  }
 
+  // check MIO.EN
+  static int cycleNumber = 0;
+  
   if(cycleNumber == 4){
+    NEXT_LATCHES.READY = 1;
+  }else if(cycleNumber == 5){
+    printf("cycling mem \n");
     int rwBit = GetR_W(CURRENT_LATCHES.MICROINSTRUCTION);
     int marZeroVal = CURRENT_LATCHES.MAR & 0x0001;
     int datasizeVal = GetDATA_SIZE(CURRENT_LATCHES.MICROINSTRUCTION);
@@ -640,22 +657,30 @@ void cycle_memory() {
         }
     }else{
         // read
+        printf("read operation! \n");
         if(datasizeVal){
-            NEXT_LATCHES.MDR = MEMORY[memoryAddress][1] << 8 | MEMORY[memoryAddress][0];
+            printf("memoryAddress: %d\n", memoryAddress);
+            printf("memory at: %d is : %d \n", CURRENT_LATCHES.MAR, MEMORY[CURRENT_LATCHES.MAR][0]);
+            printf("memory at: %d is : %d \n", memoryAddress, MEMORY[memoryAddress][0]);
+            NEXT_LATCHES.MDR = (MEMORY[memoryAddress][1] << 8) | MEMORY[memoryAddress][0];
+            printf("next latch mdr val: %d \n", NEXT_LATCHES.MDR);
         }else{
             if(marZeroVal){
-                NEXT_LATCHES.MDR = MEMORY[memoryAddress][1] >> 8;
+                NEXT_LATCHES.MDR = MEMORY[memoryAddress][1];
             }else{
                 NEXT_LATCHES.MDR = MEMORY[memoryAddress][0]; 
             }
         }
+        NEXT_LATCHES.MDR = NEXT_LATCHES.MDR & 0xFFFF;
     }
-    NEXT_LATCHES.READY = 1;
+    cycleNumber = 0;
+    return;
   }else{
     NEXT_LATCHES.READY = 0;
   }
 
-  cycleNumber = (cycleNumber + 1) % 4;
+  cycleNumber++;
+
 }
 
 int gateAluVal = 0;
@@ -665,7 +690,7 @@ int gatePcVal = 0;
 int gateShfVal = 0;
 
 int aluVal = 0;
-int marmuxVal = 0;
+int marVal = 0;
 int mdrVal = 0;
 int pcVal = 0;
 int shfVal = 0;
@@ -707,7 +732,7 @@ void eval_bus_drivers() {
         int imm5Val = (CURRENT_LATCHES.IR & 0x001F);
         if((imm5Val >> 4)){
             // sign extend imm5Val
-            inputBVal = 0xFF00 & imm5Val;
+            inputBVal = (imm5Val | 0xFFE0) & 0xFFFF;
         }else{
             inputBVal = imm5Val;
         }
@@ -719,16 +744,16 @@ void eval_bus_drivers() {
 
     if(alukVal == 0){
         //ADD
-        gateAluVal = (inputBVal + inputAVal) & 0xFFFF;
+        aluVal = (inputBVal + inputAVal) & 0xFFFF;
     }else if(alukVal == 1){
         //AND
-        gateAluVal = (inputBVal & inputAVal) & 0xFFFF;
+        aluVal = (inputBVal & inputAVal) & 0xFFFF;
     }else if(alukVal == 2){
         //XOR
-        gateAluVal = (inputBVal ^ inputAVal) & 0xFFFF;
+        aluVal = (inputBVal ^ inputAVal) & 0xFFFF;
     }else if(alukVal == 3){
         //PASSA
-        gateAluVal = (inputAVal) & 0xFFFF;
+        aluVal = (inputAVal) & 0xFFFF;
     }
   }else if(gateMarmuxVal){
     int addr1muxVal = GetADDR1MUX(CURRENT_LATCHES.MICROINSTRUCTION);
@@ -737,9 +762,9 @@ void eval_bus_drivers() {
     int lshf1Val = GetLSHF1(CURRENT_LATCHES.MICROINSTRUCTION);
     int marmuxVal = GetMARMUX(CURRENT_LATCHES.MICROINSTRUCTION);
 
-    if(marmuxVal){
+    if(!marmuxVal){
         // select LSHF(ZEXT[IR[7:0]],1)
-        marmuxVal = (CURRENT_LATCHES.IR & 0x00FF) << 1;
+        marVal = (CURRENT_LATCHES.IR & 0x00FF) << 1;
     }else{
         // output of address adder
         int addressAdderRightInput = 0;
@@ -789,7 +814,7 @@ void eval_bus_drivers() {
         }
 
         addressAdderLeftInput = addressLeftInputTempVal;
-        marmuxVal = addressAdderLeftInput + addressAdderRightInput;
+        marVal = addressAdderLeftInput + addressAdderRightInput;
     }
   }else if(gateMdrVal){
     int datasizeVal = GetDATA_SIZE(CURRENT_LATCHES.MICROINSTRUCTION);
@@ -801,12 +826,14 @@ void eval_bus_drivers() {
         if(marZeroVal == 0){
             mdrVal = (currentMdrVal & 0x00FF);
             if(mdrVal & 0x0080){
-                mdrVal |= 0xFF;
+                mdrVal = (mdrVal | 0xFF00) & 0xFFFF;
             }
         }else{
-            mdrVal = (currentMdrVal & 0xFF00) >> 8;
+            mdrVal = (currentMdrVal & 0xFF00); 
+            mdrVal = mdrVal & 0xFFFF;
+            mdrVal = mdrVal >> 8;
             if(mdrVal & 0x0080){
-                mdrVal |= 0xFF;
+                 mdrVal = (mdrVal | 0xFF00) & 0xFFFF;
             }
         }
     }
@@ -822,8 +849,9 @@ void eval_bus_drivers() {
         //IR[11:9]
         sr1RegNum = (CURRENT_LATCHES.IR >> 9) & 0x0007;
     }
-    int shfNum = (CURRENT_LATCHES.IR & 0x003F);
-    int lshf = shfNum >> 4;
+    int shfArg = (CURRENT_LATCHES.IR & 0x003F);
+    int lshf = shfArg >> 4;
+    int shfNum = shfArg & 0x000F;
     if(!lshf){
         shfVal = (CURRENT_LATCHES.REGS[sr1RegNum] << shfNum) & 0xFFFF;
     }else{
@@ -854,7 +882,7 @@ void drive_bus() {
   if(gateAluVal){
     BUS = aluVal;
   }else if(gateMarmuxVal){
-    BUS = marmuxVal;
+    BUS = marVal;
   }else if(gateMdrVal){
     BUS = mdrVal;
   }else if(gatePcVal){
@@ -901,6 +929,7 @@ void latch_datapath_values() {
             NEXT_LATCHES.MDR = (busSevenZero << 8) | busSevenZero;
         }
     }else{
+        /*
         // load MDR from memory
         int memoryLocation = CURRENT_LATCHES.MAR >> 1;
         int lowerByte = MEMORY[memoryLocation][0];
@@ -921,6 +950,7 @@ void latch_datapath_values() {
                 }
             }
         }
+        */
     }
 
 
@@ -980,7 +1010,6 @@ void latch_datapath_values() {
         int sr1muxVal = GetSR1MUX(CURRENT_LATCHES.MICROINSTRUCTION);
         int addr2muxVal = GetADDR2MUX(CURRENT_LATCHES.MICROINSTRUCTION);
         int lshf1Val = GetLSHF1(CURRENT_LATCHES.MICROINSTRUCTION);
-        int marmuxVal = GetMARMUX(CURRENT_LATCHES.MICROINSTRUCTION);
         // output of address adder
         int addressAdderRightInput = 0;
         int addressAdderLeftInput = 0;
