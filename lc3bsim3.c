@@ -15,6 +15,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 /***************************************************************/
 /*                                                             */
@@ -665,11 +666,14 @@ void cycle_memory() {
             NEXT_LATCHES.MDR = (MEMORY[memoryAddress][1] << 8) | MEMORY[memoryAddress][0];
             printf("next latch mdr val: %d \n", NEXT_LATCHES.MDR);
         }else{
+            /*
             if(marZeroVal){
                 NEXT_LATCHES.MDR = MEMORY[memoryAddress][1];
             }else{
                 NEXT_LATCHES.MDR = MEMORY[memoryAddress][0]; 
             }
+            */
+           NEXT_LATCHES.MDR = (MEMORY[memoryAddress][1] << 8) | MEMORY[memoryAddress][0];
         }
         NEXT_LATCHES.MDR = NEXT_LATCHES.MDR & 0xFFFF;
     }
@@ -782,7 +786,7 @@ void eval_bus_drivers() {
             addressAdderRightInput = CURRENT_LATCHES.REGS[baseRegNum];
         }else{
             // use PC
-            addressAdderRightInput = CURRENT_LATCHES.PC;
+            addressAdderRightInput = CURRENT_LATCHES.PC & 0xFFFF;
         }
 
         int addressLeftInputTempVal = 0;
@@ -792,7 +796,7 @@ void eval_bus_drivers() {
             //offset6
             addressLeftInputTempVal = CURRENT_LATCHES.IR & 0x003F;
             if(addressLeftInputTempVal >> 5){
-                addressLeftInputTempVal |= 0xFF40;
+                addressLeftInputTempVal |= 0xFFC0;
             }
         }else if(addr2muxVal == 2){
             //offset9
@@ -809,17 +813,16 @@ void eval_bus_drivers() {
         }
 
         if(lshf1Val){
-            addressLeftInputTempVal = addressLeftInputTempVal << 1;
-            addressLeftInputTempVal &= 0xFFFF;
+            addressLeftInputTempVal = (addressLeftInputTempVal << 1) & 0xFFFF;
         }
 
         addressAdderLeftInput = addressLeftInputTempVal;
-        marVal = addressAdderLeftInput + addressAdderRightInput;
+        marVal = (addressAdderLeftInput + addressAdderRightInput) & 0xFFFF;
     }
   }else if(gateMdrVal){
     int datasizeVal = GetDATA_SIZE(CURRENT_LATCHES.MICROINSTRUCTION);
     int marZeroVal = CURRENT_LATCHES.MAR & 0x0001;
-    int currentMdrVal = CURRENT_LATCHES.MDR;
+    int currentMdrVal = CURRENT_LATCHES.MDR & 0xFFFF;
     if(datasizeVal){
         mdrVal = currentMdrVal;
     }else{
@@ -890,6 +893,8 @@ void drive_bus() {
   }else if(gateShfVal){
     BUS = shfVal;
   }
+
+  BUS &= 0xFFFF;
 }
 
 
@@ -923,7 +928,7 @@ void latch_datapath_values() {
     if(!mioEnVal){
         // load MDR from bus
         if(!marZeroVal){
-            NEXT_LATCHES.MDR = BUS;
+            NEXT_LATCHES.MDR = BUS & 0xFFFF;
         }else{
             int busSevenZero = BUS & 0x00FF;
             NEXT_LATCHES.MDR = (busSevenZero << 8) | busSevenZero;
@@ -957,13 +962,13 @@ void latch_datapath_values() {
   }
 
   if(ldIrVal){
-    NEXT_LATCHES.IR = BUS;
+    NEXT_LATCHES.IR = BUS & 0xFFFF;
   }
 
   if(ldBenVal){
-    int nBit = CURRENT_LATCHES.IR >> 11;
-    int zBit = CURRENT_LATCHES.IR >> 10;
-    int pBit = CURRENT_LATCHES.IR >> 9;
+    int nBit = (CURRENT_LATCHES.IR >> 11) & 0x0001;
+    int zBit = (CURRENT_LATCHES.IR >> 10) & 0x0001;
+    int pBit = (CURRENT_LATCHES.IR >> 9) & 0x0001;
 
     NEXT_LATCHES.BEN = (CURRENT_LATCHES.N && nBit) || (CURRENT_LATCHES.Z && zBit) || (CURRENT_LATCHES.P && pBit);
   }
@@ -978,11 +983,11 @@ void latch_datapath_values() {
     }else{
         drRegNum = (CURRENT_LATCHES.IR >> 9) & 0x0007;
     }
-    NEXT_LATCHES.REGS[drRegNum] = BUS;
-
+    NEXT_LATCHES.REGS[drRegNum] = BUS & 0xFFFF;
   }
 
   if(ldCcVal){
+    BUS &= 0xFFFF;
     NEXT_LATCHES.N = 0;
     NEXT_LATCHES.Z = 0;
     NEXT_LATCHES.P = 0;
@@ -1004,7 +1009,7 @@ void latch_datapath_values() {
     if(pcMuxVal == 0){
         NEXT_LATCHES.PC = CURRENT_LATCHES.PC + 2;
     }else if(pcMuxVal == 1){
-        NEXT_LATCHES.PC = BUS;
+        NEXT_LATCHES.PC = BUS & 0xFFFF;
     }else if(pcMuxVal == 2){
         int addr1muxVal = GetADDR1MUX(CURRENT_LATCHES.MICROINSTRUCTION);
         int sr1muxVal = GetSR1MUX(CURRENT_LATCHES.MICROINSTRUCTION);
@@ -1023,10 +1028,10 @@ void latch_datapath_values() {
                 // IR[11:9]
                 baseRegNum = (CURRENT_LATCHES.IR >> 9) & 0x0007;
             }
-            addressAdderRightInput = CURRENT_LATCHES.REGS[baseRegNum];
+            addressAdderRightInput = CURRENT_LATCHES.REGS[baseRegNum] & 0xFFFF;
         }else{
             // use PC
-            addressAdderRightInput = CURRENT_LATCHES.PC;
+            addressAdderRightInput = CURRENT_LATCHES.PC & 0xFFFF;
         }
 
         int addressLeftInputTempVal = 0;
@@ -1036,7 +1041,7 @@ void latch_datapath_values() {
             //offset6
             addressLeftInputTempVal = CURRENT_LATCHES.IR & 0x003F;
             if(addressLeftInputTempVal >> 5){
-                addressLeftInputTempVal |= 0xFF40;
+                addressLeftInputTempVal |= 0xFFC0;
             }
         }else if(addr2muxVal == 2){
             //offset9
@@ -1053,14 +1058,16 @@ void latch_datapath_values() {
         }
 
         if(lshf1Val){
-            addressLeftInputTempVal = addressLeftInputTempVal << 1;
-            addressLeftInputTempVal &= 0xFFFF;
+            addressLeftInputTempVal = (addressLeftInputTempVal << 1) & 0xFFFF;
         }
 
         addressAdderLeftInput = addressLeftInputTempVal;
-        NEXT_LATCHES.PC = addressAdderLeftInput + addressAdderRightInput;
+        NEXT_LATCHES.PC = (addressAdderLeftInput + addressAdderRightInput) & 0xFFFF;
     }
   }
 
+  // clear bus here ?
+  BUS = 0;
+  // maintain conditions, they have to persist until they change ?
 
 }
